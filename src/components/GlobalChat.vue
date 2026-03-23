@@ -1,265 +1,180 @@
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from "vue"
-import { onAuthStateChanged } from "firebase/auth"
-import {
-  addDoc,
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp
-} from "firebase/firestore"
+import { ref } from "vue"
+import { useRouter } from "vue-router"
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth"
+import { doc, serverTimestamp, setDoc } from "firebase/firestore"
 import { auth, db } from "../api/firebase"
 
-const isOpen = ref(false)
-const currentUser = ref(null)
-const messages = ref([])
-const newMessage = ref("")
-const loading = ref(false)
-const sending = ref(false)
+const router = useRouter()
+
+const firstName = ref("")
+const surname = ref("")
+const email = ref("")
+const password = ref("")
+const confirmPassword = ref("")
 const errorMessage = ref("")
-const messagesBox = ref(null)
+const loading = ref(false)
 
-let unsubscribeAuth = null
-let unsubscribeMessages = null
-
-const scrollToBottom = async () => {
-  await nextTick()
-
-  if (messagesBox.value) {
-    messagesBox.value.scrollTop = messagesBox.value.scrollHeight
-  }
-}
-
-const startMessagesListener = () => {
-  if (unsubscribeMessages) return
-
+const register = async () => {
+  errorMessage.value = ""
   loading.value = true
-  errorMessage.value = ""
 
-  const messagesRef = collection(db, "globalMessages")
-  const messagesQuery = query(messagesRef, orderBy("createdAt", "asc"))
+  const cleanFirstName = firstName.value.trim()
+  const cleanSurname = surname.value.trim()
+  const cleanEmail = email.value.trim().toLowerCase()
 
-  unsubscribeMessages = onSnapshot(
-    messagesQuery,
-    async (snapshot) => {
-      messages.value = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data()
-      }))
-
-      loading.value = false
-      await scrollToBottom()
-    },
-    (error) => {
-      console.error("Error loading global chat:", error)
-      errorMessage.value = "Failed to load global chat."
-      loading.value = false
-    }
-  )
-}
-
-const stopMessagesListener = () => {
-  if (unsubscribeMessages) {
-    unsubscribeMessages()
-    unsubscribeMessages = null
-  }
-}
-
-const toggleChat = () => {
-  isOpen.value = !isOpen.value
-
-  if (isOpen.value) {
-    startMessagesListener()
-    scrollToBottom()
-  }
-}
-
-const closeChat = () => {
-  isOpen.value = false
-}
-
-const sendMessage = async () => {
-  errorMessage.value = ""
-
-  if (!currentUser.value) {
-    errorMessage.value = "You must be logged in to use global chat."
+  if (!cleanFirstName) {
+    errorMessage.value = "First name is required."
+    loading.value = false
     return
   }
 
-  if (!newMessage.value.trim()) {
-    errorMessage.value = "Message cannot be empty."
+  if (!cleanSurname) {
+    errorMessage.value = "Surname is required."
+    loading.value = false
     return
   }
 
-  sending.value = true
+  if (password.value !== confirmPassword.value) {
+    errorMessage.value = "Passwords do not match."
+    loading.value = false
+    return
+  }
 
   try {
-    await addDoc(collection(db, "globalMessages"), {
-      text: newMessage.value.trim(),
-      senderId: currentUser.value.uid,
-      senderEmail: currentUser.value.email || "Unknown user",
+    const userCredential = await createUserWithEmailAndPassword(
+      auth,
+      cleanEmail,
+      password.value
+    )
+
+    const user = userCredential.user
+    const fullName = `${cleanFirstName} ${cleanSurname}`
+
+    await updateProfile(user, {
+      displayName: fullName
+    })
+
+    await setDoc(doc(db, "users", user.uid), {
+      uid: user.uid,
+      email: user.email?.toLowerCase() || cleanEmail,
+      firstName: cleanFirstName,
+      surname: cleanSurname,
+      displayName: fullName,
+      avatarUrl: "",
+      theme: "light",
+      defaultVisibility: "private",
+      friends: [],
       createdAt: serverTimestamp()
     })
 
-    newMessage.value = ""
-    await scrollToBottom()
+    router.push("/")
   } catch (error) {
-    console.error("Error sending message:", error)
-    errorMessage.value = "Failed to send message."
+    switch (error.code) {
+      case "auth/email-already-in-use":
+        errorMessage.value = "That email is already in use."
+        break
+      case "auth/invalid-email":
+        errorMessage.value = "Please enter a valid email address."
+        break
+      case "auth/weak-password":
+        errorMessage.value = "Password should be at least 6 characters."
+        break
+      default:
+        errorMessage.value = "Registration failed. Please try again."
+    }
   } finally {
-    sending.value = false
+    loading.value = false
   }
 }
-
-onMounted(() => {
-  unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-    currentUser.value = user
-
-    if (!user) {
-      closeChat()
-      stopMessagesListener()
-      messages.value = []
-    }
-  })
-})
-
-onUnmounted(() => {
-  if (unsubscribeAuth) {
-    unsubscribeAuth()
-  }
-
-  stopMessagesListener()
-})
 </script>
 
 <template>
-  <div v-if="currentUser" class="global-chat-wrapper">
-    <button class="btn btn-primary global-chat-toggle shadow" @click="toggleChat">
-      {{ isOpen ? "Close Chat" : "Global Chat" }}
-    </button>
+  <section class="taskmate-page container">
+    <div class="taskmate-card-sm">
+      <div class="card yellow-sticker-card p-4 p-md-5">
+        <h1 class="text-center fw-bold mb-4">Register</h1>
 
-    <div v-if="isOpen" class="card global-chat-popup shadow-lg">
-      <div class="card-header global-chat-header d-flex justify-content-between align-items-center">
-        <div>
-          <h5 class="mb-0">Global Chat</h5>
-          <small class="text-white-50">Logged in as {{ currentUser.email }}</small>
-        </div>
-
-        <button class="btn btn-sm btn-light" @click="closeChat">
-          ✕
-        </button>
-      </div>
-
-      <div ref="messagesBox" class="card-body global-chat-messages">
-        <div v-if="loading" class="text-center text-muted py-4">
-          Loading messages...
-        </div>
-
-        <div v-else-if="messages.length === 0" class="text-center text-muted py-4">
-          No messages yet. Start the conversation.
-        </div>
-
-        <div v-else>
-          <div
-            v-for="message in messages"
-            :key="message.id"
-            class="global-chat-message mb-3"
-          >
-            <div class="small fw-bold text-primary">
-              {{ message.senderEmail }}
-            </div>
-
-            <div class="message-bubble">
-              {{ message.text }}
-            </div>
+        <form @submit.prevent="register">
+          <div class="mb-3">
+            <label for="registerFirstName" class="form-label">First Name</label>
+            <input
+              id="registerFirstName"
+              v-model="firstName"
+              type="text"
+              class="form-control"
+              placeholder="Enter your first name"
+              autocomplete="given-name"
+              required
+            />
           </div>
-        </div>
-      </div>
 
-      <div class="card-footer">
-        <div v-if="errorMessage" class="alert alert-danger py-2 mb-2">
-          {{ errorMessage }}
-        </div>
+          <div class="mb-3">
+            <label for="registerSurname" class="form-label">Surname</label>
+            <input
+              id="registerSurname"
+              v-model="surname"
+              type="text"
+              class="form-control"
+              placeholder="Enter your surname"
+              autocomplete="family-name"
+              required
+            />
+          </div>
 
-        <form class="d-flex gap-2" @submit.prevent="sendMessage">
-          <input
-            v-model="newMessage"
-            type="text"
-            class="form-control"
-            placeholder="Type a message..."
-            :disabled="sending"
-          />
+          <div class="mb-3">
+            <label for="registerEmail" class="form-label">Email address</label>
+            <input
+              id="registerEmail"
+              v-model="email"
+              type="email"
+              class="form-control"
+              placeholder="Enter your email"
+              autocomplete="email"
+              required
+            />
+          </div>
 
-          <button type="submit" class="btn btn-success" :disabled="sending">
-            {{ sending ? "Sending..." : "Send" }}
+          <div class="mb-3">
+            <label for="registerPassword" class="form-label">Password</label>
+            <input
+              id="registerPassword"
+              v-model="password"
+              type="password"
+              class="form-control"
+              placeholder="Create a password"
+              autocomplete="new-password"
+              required
+            />
+          </div>
+
+          <div class="mb-3">
+            <label for="registerConfirmPassword" class="form-label">Confirm Password</label>
+            <input
+              id="registerConfirmPassword"
+              v-model="confirmPassword"
+              type="password"
+              class="form-control"
+              placeholder="Confirm your password"
+              autocomplete="new-password"
+              required
+            />
+          </div>
+
+          <div v-if="errorMessage" class="alert alert-danger" role="alert">
+            {{ errorMessage }}
+          </div>
+
+          <button type="submit" class="btn btn-success w-100" :disabled="loading">
+            {{ loading ? "Creating account..." : "Create Account" }}
           </button>
         </form>
+
+        <p class="text-center mt-4 mb-0">
+          Already have an account?
+          <router-link to="/login">Login here</router-link>
+        </p>
       </div>
     </div>
-  </div>
+  </section>
 </template>
-
-<style scoped>
-.global-chat-wrapper {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 2000;
-}
-
-.global-chat-toggle {
-  border-radius: 999px;
-  padding: 0.75rem 1rem;
-  font-weight: 600;
-}
-
-.global-chat-popup {
-  width: 360px;
-  height: 500px;
-  margin-top: 0.75rem;
-  border: none;
-  border-radius: 18px;
-  overflow: hidden;
-  background: #ffffff;
-}
-
-.global-chat-header {
-  background: linear-gradient(90deg, #0d6efd, #198754);
-  color: white;
-}
-
-.global-chat-messages {
-  height: 340px;
-  overflow-y: auto;
-  background: #f8f9fa;
-}
-
-.global-chat-message {
-  display: flex;
-  flex-direction: column;
-}
-
-.message-bubble {
-  display: inline-block;
-  max-width: 100%;
-  padding: 0.65rem 0.85rem;
-  border-radius: 14px;
-  background: #ffffff;
-  border: 1px solid #e9ecef;
-  word-break: break-word;
-}
-
-@media (max-width: 576px) {
-  .global-chat-wrapper {
-    right: 12px;
-    left: 12px;
-    bottom: 12px;
-  }
-
-  .global-chat-popup {
-    width: 100%;
-    height: 70vh;
-  }
-}
-</style>

@@ -1,188 +1,234 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from "vue"
+import { ref, computed, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import { onAuthStateChanged, signOut } from "firebase/auth"
-import { auth } from "../api/firebase"
+import { doc, onSnapshot } from "firebase/firestore"
+import { auth, db } from "../api/firebase"
 
 const router = useRouter()
+
 const currentUser = ref(null)
+const avatarUrl = ref("")
+const displayName = ref("")
+const showDropdown = ref(false)
 
-let unsubscribe = null
+let unsubscribeAuth = null
+let unsubscribeUserDoc = null
 
-const logoRoute = computed(() => {
-  return currentUser.value ? "/create-project" : "/"
+const initials = computed(() => {
+  const name = displayName.value.trim()
+
+  if (!name) {
+    const email = currentUser.value?.email || ""
+    return email ? email.charAt(0).toUpperCase() : "T"
+  }
+
+  const parts = name.split(" ").filter(Boolean)
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase()
+  }
+
+  return (parts[0][0] + parts[1][0]).toUpperCase()
 })
 
+const toggleDropdown = () => {
+  showDropdown.value = !showDropdown.value
+}
+
+const closeDropdown = () => {
+  showDropdown.value = false
+}
+
+const goHome = () => {
+  closeDropdown()
+  router.push("/")
+}
+
+const goProjects = () => {
+  closeDropdown()
+  router.push("/projects")
+}
+
+const goSettings = () => {
+  closeDropdown()
+  router.push("/settings")
+}
+
+const goFriends = () => {
+  closeDropdown()
+  router.push("/friends")
+}
+
+const logout = async () => {
+  closeDropdown()
+  await signOut(auth)
+  router.push("/")
+}
+
 onMounted(() => {
-  unsubscribe = onAuthStateChanged(auth, (user) => {
+  unsubscribeAuth = onAuthStateChanged(auth, (user) => {
     currentUser.value = user
+    avatarUrl.value = ""
+    displayName.value = user?.displayName || ""
+
+    if (unsubscribeUserDoc) {
+      unsubscribeUserDoc()
+      unsubscribeUserDoc = null
+    }
+
+    if (user) {
+      const userRef = doc(db, "users", user.uid)
+
+      unsubscribeUserDoc = onSnapshot(userRef, (snap) => {
+        if (snap.exists()) {
+          const data = snap.data()
+          avatarUrl.value = data.avatarUrl || ""
+          displayName.value =
+            data.displayName || user.displayName || user.email || "TaskMate User"
+        } else {
+          avatarUrl.value = ""
+          displayName.value = user.displayName || user.email || "TaskMate User"
+        }
+      })
+    }
   })
+
+  document.addEventListener("click", closeDropdown)
 })
 
 onUnmounted(() => {
-  if (unsubscribe) {
-    unsubscribe()
-  }
+  if (unsubscribeAuth) unsubscribeAuth()
+  if (unsubscribeUserDoc) unsubscribeUserDoc()
+  document.removeEventListener("click", closeDropdown)
 })
-
-const logout = async () => {
-  try {
-    await signOut(auth)
-    router.push("/")
-  } catch (error) {
-    console.error("Logout failed:", error)
-  }
-}
 </script>
 
 <template>
-  <nav class="taskmate-navbar">
-    <div class="container taskmate-navbar-inner">
-      <router-link :to="logoRoute" class="taskmate-brand">
-        <img
-          src="/taskmate-logo.png"
-          alt="TaskMate logo"
-          class="taskmate-logo"
-        />
-        <span>TaskMate</span>
-      </router-link>
+  <nav class="navbar navbar-expand-lg navbar-light bg-light px-3">
+    <div class="container-fluid d-flex justify-content-between align-items-center">
+      <div class="d-flex align-items-center gap-2">
+        <div class="nav-avatar-wrapper" @click.stop="goHome">
+          <img
+            v-if="currentUser && avatarUrl"
+            :src="avatarUrl"
+            alt="avatar"
+            class="nav-avatar"
+          />
 
-      <div class="taskmate-nav-links">
-        <router-link to="/" class="taskmate-link">
+          <div
+            v-else-if="currentUser"
+            class="nav-avatar-fallback"
+          >
+            {{ initials }}
+          </div>
+
+          <img
+            v-else
+            src="/taskmate-logo.png"
+            alt="logo"
+            class="nav-logo"
+          />
+        </div>
+
+        <div class="d-flex flex-column">
+          <span class="fw-bold nav-title">TaskMate</span>
+          <small v-if="currentUser" class="text-muted nav-display-name">
+            {{ displayName }}
+          </small>
+        </div>
+      </div>
+
+      <div v-if="currentUser" class="position-relative d-flex gap-2">
+        <button
+          class="btn btn-primary btn-sm"
+          @click.stop="goHome"
+        >
           Home
-        </router-link>
-
-        <router-link v-if="currentUser" to="/projects" class="taskmate-link">
-          My Projects
-        </router-link>
-
-        <router-link v-if="currentUser" to="/settings" class="taskmate-link">
-          Settings
-        </router-link>
-
-        <router-link v-if="!currentUser" to="/login" class="taskmate-auth-btn taskmate-login-btn">
-          Login
-        </router-link>
-
-        <router-link v-if="!currentUser" to="/register" class="taskmate-auth-btn taskmate-register-btn">
-          Register
-        </router-link>
-
-        <button v-if="currentUser" class="taskmate-logout-btn" @click="logout">
-          Logout
         </button>
+
+        <button
+          class="btn btn-outline-secondary btn-sm"
+          @click.stop="toggleDropdown"
+        >
+          Menu
+        </button>
+
+        <div v-if="showDropdown" class="dropdown-menu-custom" @click.stop>
+          <button @click="goProjects">My Projects</button>
+          <button @click="goFriends">Friends</button>
+          <button @click="goSettings">Settings</button>
+          <hr />
+          <button @click="logout" class="text-danger">Logout</button>
+        </div>
       </div>
     </div>
   </nav>
 </template>
 
 <style scoped>
-.taskmate-navbar {
-  width: 100%;
-  background: linear-gradient(90deg, #0d6efd, #198754);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
-}
-
-.taskmate-navbar-inner {
-  min-height: 78px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.taskmate-brand {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  color: #ffffff;
-  text-decoration: none;
-  font-size: 1.8rem;
-  font-weight: 700;
-}
-
-.taskmate-brand:hover {
-  color: #ffffff;
-}
-
-.taskmate-logo {
-  width: 42px;
-  height: 42px;
-  object-fit: contain;
-  display: block;
-}
-
-.taskmate-nav-links {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.taskmate-link {
-  color: #ffffff;
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.taskmate-link:hover {
-  color: #ffffff;
-  text-decoration: underline;
-}
-
-.taskmate-auth-btn,
-.taskmate-logout-btn {
-  border: none;
-  text-decoration: none;
-  padding: 0.5rem 0.95rem;
-  border-radius: 12px;
-  font-weight: 600;
+.nav-avatar-wrapper {
   cursor: pointer;
 }
 
-.taskmate-login-btn {
-  background: #ffffff;
-  color: #212529;
+.nav-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #dee2e6;
 }
 
-.taskmate-login-btn:hover {
-  background: #f1f3f5;
-  color: #212529;
-}
-
-.taskmate-register-btn {
-  background: #198754;
+.nav-avatar-fallback {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #0d6efd;
   color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.95rem;
+  border: 2px solid #dee2e6;
 }
 
-.taskmate-register-btn:hover {
-  background: #157347;
-  color: #ffffff;
+.nav-logo {
+  width: 44px;
+  height: 44px;
 }
 
-.taskmate-logout-btn {
-  background: #ffffff;
-  color: #212529;
+.nav-title {
+  line-height: 1.1;
 }
 
-.taskmate-logout-btn:hover {
-  background: #f1f3f5;
+.nav-display-name {
+  line-height: 1.1;
 }
 
-@media (max-width: 768px) {
-  .taskmate-navbar-inner {
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    gap: 0.85rem;
-    padding-top: 0.9rem;
-    padding-bottom: 0.9rem;
-  }
+.dropdown-menu-custom {
+  position: absolute;
+  right: 0;
+  top: 42px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 0.5rem;
+  width: 160px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  z-index: 1200;
+}
 
-  .taskmate-nav-links {
-    flex-wrap: wrap;
-  }
+.dropdown-menu-custom button {
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0.5rem;
+  text-align: left;
+  cursor: pointer;
+}
 
-  .taskmate-brand {
-    font-size: 1.5rem;
-  }
+.dropdown-menu-custom button:hover {
+  background: #f1f1f1;
 }
 </style>

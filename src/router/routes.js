@@ -10,6 +10,7 @@ import CreateProject from "../pages/CreateProject.vue"
 import Tasks from "../pages/Tasks.vue"
 import Settings from "../pages/Settings.vue"
 import About from "../pages/About.vue"
+import Friends from "../pages/Friends.vue"
 
 function getCurrentUser() {
   return new Promise((resolve, reject) => {
@@ -93,6 +94,12 @@ const routes = [
     component: Settings,
     meta: { requiresAuth: true }
   },
+  {
+  path: "/friends",
+  name: "friends",
+  component: Friends,
+  meta: { requiresAuth: true }
+},
   {
     path: "/about",
     name: "about",

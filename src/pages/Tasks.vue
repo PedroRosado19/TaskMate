@@ -28,6 +28,7 @@ const project = ref(null)
 const tasks = ref([])
 const steps = ref([])
 const messages = ref([])
+const memberDetails = ref([])
 
 const loadingProject = ref(true)
 const loadingTasks = ref(true)
@@ -43,17 +44,15 @@ const stepTitle = ref("")
 const stepDescription = ref("")
 const stepError = ref("")
 
-const settingsVisibility = ref("private")
-
 const showAddMemberModal = ref(false)
-const invitedEmail = ref("")
+const memberEmail = ref("")
 
 const projectError = ref("")
 const taskError = ref("")
 const chatError = ref("")
 const successMessage = ref("")
-const inviteError = ref("")
-const inviteSuccess = ref("")
+const memberError = ref("")
+const memberSuccess = ref("")
 
 let unsubscribeTasks = null
 let unsubscribeSteps = null
@@ -85,6 +84,46 @@ const progressPercent = computed(() => {
   return Math.round((completedTasks.value / totalTasks.value) * 100)
 })
 
+const loadMemberDetails = async (memberIds = []) => {
+  memberDetails.value = []
+
+  if (!memberIds.length) {
+    return
+  }
+
+  try {
+    const loadedMembers = await Promise.all(
+      memberIds.map(async (uid) => {
+        const userSnap = await getDoc(doc(db, "users", uid))
+
+        if (userSnap.exists()) {
+          const data = userSnap.data()
+          return {
+            uid,
+            email: data.email || uid,
+            displayName: data.displayName || ""
+          }
+        }
+
+        return {
+          uid,
+          email: uid,
+          displayName: ""
+        }
+      })
+    )
+
+    memberDetails.value = loadedMembers
+  } catch (error) {
+    console.error("Error loading member details:", error)
+    memberDetails.value = memberIds.map((uid) => ({
+      uid,
+      email: uid,
+      displayName: ""
+    }))
+  }
+}
+
 const loadProject = async () => {
   loadingProject.value = true
   projectError.value = ""
@@ -105,7 +144,7 @@ const loadProject = async () => {
       ...projectSnap.data()
     }
 
-    settingsVisibility.value = project.value.visibility || "private"
+    await loadMemberDetails(project.value.members || [])
   } catch (error) {
     console.error("Error loading project:", error)
     projectError.value = "Failed to load project."
@@ -221,76 +260,87 @@ const closeTaskModal = () => {
 }
 
 const openAddMemberModal = () => {
-  invitedEmail.value = ""
-  inviteError.value = ""
-  inviteSuccess.value = ""
+  memberEmail.value = ""
+  memberError.value = ""
+  memberSuccess.value = ""
   showAddMemberModal.value = true
 }
 
 const closeAddMemberModal = () => {
-  invitedEmail.value = ""
-  inviteError.value = ""
-  inviteSuccess.value = ""
+  memberEmail.value = ""
+  memberError.value = ""
+  memberSuccess.value = ""
   showAddMemberModal.value = false
 }
 
-const sendInvitation = async () => {
-  inviteError.value = ""
-  inviteSuccess.value = ""
+const addMemberByAccount = async () => {
+  memberError.value = ""
+  memberSuccess.value = ""
 
   if (!isOwner.value) {
-    inviteError.value = "Only the project owner can send invitations."
+    memberError.value = "Only the project owner can add members."
     return
   }
 
-  if (!invitedEmail.value.trim()) {
-    inviteError.value = "Enter an email address."
+  if (!memberEmail.value.trim()) {
+    memberError.value = "Enter a TaskMate account email."
     return
   }
 
-  const cleanEmail = invitedEmail.value.trim().toLowerCase()
+  const cleanEmail = memberEmail.value.trim().toLowerCase()
 
   if (!cleanEmail.includes("@")) {
-    inviteError.value = "Enter a valid email address."
+    memberError.value = "Enter a valid email address."
     return
   }
 
   if (cleanEmail === (currentUser.value?.email || "").toLowerCase()) {
-    inviteError.value = "You are already the owner of this project."
+    memberError.value = "You are already the owner of this project."
     return
   }
 
   try {
-    const invitationsRef = collection(db, "invitations")
-    const duplicateQuery = query(
-      invitationsRef,
-      where("projectId", "==", projectId),
-      where("invitedEmail", "==", cleanEmail),
-      where("status", "==", "pending")
-    )
+    const usersRef = collection(db, "users")
+    const usersQuery = query(usersRef, where("email", "==", cleanEmail))
+    const userSnapshot = await getDocs(usersQuery)
 
-    const existingInvites = await getDocs(duplicateQuery)
-
-    if (!existingInvites.empty) {
-      inviteError.value = "A pending invitation already exists for this email."
+    if (userSnapshot.empty) {
+      memberError.value = "No TaskMate account found for this email."
       return
     }
 
-    await addDoc(invitationsRef, {
-      projectId,
-      projectName: project.value?.name || "Group Project",
-      ownerId: currentUser.value.uid,
-      ownerEmail: currentUser.value.email || "",
-      invitedEmail: cleanEmail,
-      status: "pending",
+    const foundUser = userSnapshot.docs[0].data()
+    const foundUid = foundUser.uid
+
+    if (!foundUid) {
+      memberError.value = "That account could not be added."
+      return
+    }
+
+    if (project.value?.members?.includes(foundUid)) {
+      memberError.value = "This user is already a member of the project."
+      return
+    }
+
+    await updateDoc(doc(db, "projects", projectId), {
+      members: arrayUnion(foundUid),
+      projectType: "group"
+    })
+
+    await addDoc(collection(db, "projects", projectId, "messages"), {
+      text: `${cleanEmail} was added to the group project.`,
+      senderId: currentUser.value.uid,
+      senderEmail: currentUser.value.email || "Unknown user",
+      systemMessage: true,
       createdAt: serverTimestamp()
     })
 
-    inviteSuccess.value = "Invitation sent successfully."
-    invitedEmail.value = ""
+    memberSuccess.value = "Member added successfully."
+    memberEmail.value = ""
+    await loadProject()
   } catch (error) {
-    console.error("Error sending invitation:", error)
-    inviteError.value = "Failed to send invitation."
+    console.error("Error adding member:", error)
+    memberError.value = "Failed to add member."
   }
 }
 
@@ -435,28 +485,6 @@ const removeStep = async (step) => {
   }
 }
 
-const updateProjectVisibility = async () => {
-  projectError.value = ""
-  successMessage.value = ""
-
-  if (!isOwner.value) {
-    projectError.value = "Only the project owner can change visibility."
-    return
-  }
-
-  try {
-    await updateDoc(doc(db, "projects", projectId), {
-      visibility: settingsVisibility.value
-    })
-
-    await loadProject()
-    successMessage.value = "Project visibility updated successfully."
-  } catch (error) {
-    console.error("Error updating project visibility:", error)
-    projectError.value = "Failed to update project visibility."
-  }
-}
-
 const removeMember = async (memberId) => {
   chatError.value = ""
   successMessage.value = ""
@@ -511,6 +539,7 @@ const sendMessage = async () => {
       text: newMessage.value.trim(),
       senderId: currentUser.value.uid,
       senderEmail: currentUser.value.email || "Unknown user",
+      systemMessage: false,
       createdAt: serverTimestamp()
     })
 
@@ -558,9 +587,6 @@ onUnmounted(() => {
             <p class="text-muted small mb-1">
               {{ isGroupProject ? "Group Project" : "My Project" }}
             </p>
-            <p class="text-muted small mb-0">
-              Visibility: <strong class="text-capitalize">{{ project.visibility || "private" }}</strong>
-            </p>
           </div>
 
           <div v-if="successMessage" class="alert alert-success">
@@ -590,39 +616,6 @@ onUnmounted(() => {
 
             <small class="text-muted">
               Progress is based on completed tasks.
-            </small>
-          </div>
-
-          <div class="card p-4 border-0 shadow-sm mb-4">
-            <h4 class="fw-bold mb-3">Project Settings</h4>
-
-            <div class="row g-3 align-items-end">
-              <div class="col-md-8">
-                <label for="settingsVisibility" class="form-label">Visibility</label>
-                <select
-                  id="settingsVisibility"
-                  v-model="settingsVisibility"
-                  class="form-select"
-                  :disabled="!isOwner"
-                >
-                  <option value="private">Private</option>
-                  <option value="public">Public</option>
-                </select>
-              </div>
-
-              <div class="col-md-4">
-                <button
-                  class="btn btn-primary w-100"
-                  @click="updateProjectVisibility"
-                  :disabled="!isOwner"
-                >
-                  {{ isOwner ? "Save Visibility" : "Owner Only" }}
-                </button>
-              </div>
-            </div>
-
-            <small class="text-muted d-block mt-2">
-              Only the project owner can change visibility.
             </small>
           </div>
 
@@ -754,16 +747,16 @@ onUnmounted(() => {
               <h6 class="fw-bold mb-2">Members</h6>
               <ul class="member-list">
                 <li
-                  v-for="member in project.members"
-                  :key="member"
+                  v-for="member in memberDetails"
+                  :key="member.uid"
                   class="member-row"
                 >
-                  <span>{{ member }}</span>
+                  <span>{{ member.email }}</span>
 
                   <button
-                    v-if="isOwner && member !== project.ownerId"
+                    v-if="isOwner && member.uid !== project.ownerId"
                     class="btn btn-outline-danger btn-sm"
-                    @click="removeMember(member)"
+                    @click="removeMember(member.uid)"
                   >
                     Remove Member
                   </button>
@@ -782,7 +775,12 @@ onUnmounted(() => {
 
               <div v-else>
                 <div v-for="message in messages" :key="message.id" class="chat-message">
-                  <strong>{{ message.senderEmail }}:</strong> {{ message.text }}
+                  <template v-if="message.systemMessage">
+                    <em>{{ message.text }}</em>
+                  </template>
+                  <template v-else>
+                    <strong>{{ message.senderEmail }}:</strong> {{ message.text }}
+                  </template>
                 </div>
               </div>
             </div>
@@ -917,26 +915,26 @@ onUnmounted(() => {
           <div>
             <h4 class="fw-bold mb-1">Add Member</h4>
             <p class="text-muted small mb-0">
-              Send an in-app invitation by email.
+              Add any registered TaskMate user by email.
             </p>
           </div>
 
           <button class="btn-close" @click="closeAddMemberModal"></button>
         </div>
 
-        <div v-if="inviteError" class="alert alert-danger">
-          {{ inviteError }}
+        <div v-if="memberError" class="alert alert-danger">
+          {{ memberError }}
         </div>
 
-        <div v-if="inviteSuccess" class="alert alert-success">
-          {{ inviteSuccess }}
+        <div v-if="memberSuccess" class="alert alert-success">
+          {{ memberSuccess }}
         </div>
 
         <div class="mb-3">
-          <label for="invitedEmail" class="form-label">Member Email</label>
+          <label for="memberEmail" class="form-label">TaskMate Account Email</label>
           <input
-            id="invitedEmail"
-            v-model="invitedEmail"
+            id="memberEmail"
+            v-model="memberEmail"
             type="email"
             class="form-control"
             placeholder="Enter member email"
@@ -947,8 +945,8 @@ onUnmounted(() => {
           <button class="btn btn-outline-secondary w-50" @click="closeAddMemberModal">
             Cancel
           </button>
-          <button class="btn btn-success w-50" @click="sendInvitation">
-            Send Invitation
+          <button class="btn btn-success w-50" @click="addMemberByAccount">
+            Add Member
           </button>
         </div>
       </div>

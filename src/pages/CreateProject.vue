@@ -2,7 +2,13 @@
 import { ref, onMounted, onUnmounted } from "vue"
 import { useRouter } from "vue-router"
 import { onAuthStateChanged } from "firebase/auth"
-import { addDoc, collection, serverTimestamp } from "firebase/firestore"
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp
+} from "firebase/firestore"
 import { auth, db } from "../api/firebase"
 
 const router = useRouter()
@@ -19,9 +25,11 @@ let unsubscribeAuth = null
 const generateJoinCode = () => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
   let code = "TM-"
+
   for (let i = 0; i < 6; i++) {
     code += chars.charAt(Math.floor(Math.random() * chars.length))
   }
+
   return code
 }
 
@@ -50,12 +58,17 @@ const createProject = async () => {
     const isGroup = projectMode.value === "group"
     const joinCode = isGroup ? generateJoinCode() : null
 
+    const userRef = doc(db, "users", currentUser.value.uid)
+    const userSnap = await getDoc(userRef)
+    const userData = userSnap.exists() ? userSnap.data() : {}
+    const userDefaultVisibility = userData?.defaultVisibility || "private"
+
     await addDoc(collection(db, "projects"), {
       name: projectName.value.trim(),
       ownerId: currentUser.value.uid,
       members: [currentUser.value.uid],
       projectType: projectMode.value,
-      visibility: "private",
+      visibility: userDefaultVisibility,
       joinCode,
       createdAt: serverTimestamp()
     })
@@ -67,7 +80,7 @@ const createProject = async () => {
     resetForm()
 
     setTimeout(() => {
-      router.push("/projects")
+      router.push("/")
     }, 800)
   } catch (error) {
     console.error("Error creating project:", error)
@@ -97,7 +110,7 @@ onUnmounted(() => {
         <div class="mb-4">
           <h2 class="fw-bold mb-1">Create Project</h2>
           <p class="text-muted mb-0 small">
-            Create a solo or group project. Visibility can be changed later in settings.
+            Create a solo or group project. Visibility will use your Settings preference.
           </p>
         </div>
 
@@ -133,7 +146,7 @@ onUnmounted(() => {
               <option value="group">Group Project</option>
             </select>
             <small class="text-muted">
-              Group projects generate a join code for other members.
+              Group projects allow you to add existing TaskMate users as members.
             </small>
           </div>
 
@@ -141,7 +154,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="btn btn-outline-secondary w-50"
-              @click="router.push('/projects')"
+              @click="router.push('/')"
             >
               Cancel
             </button>

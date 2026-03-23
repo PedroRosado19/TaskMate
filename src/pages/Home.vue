@@ -64,8 +64,8 @@ onUnmounted(() => {
               My Projects
             </router-link>
 
-            <router-link to="/settings" class="btn btn-primary btn-lg px-4">
-              Settings
+            <router-link to="/friends" class="btn btn-primary btn-lg px-4">
+              Friends
             </router-link>
           </template>
         </div>
