@@ -4,6 +4,7 @@ import { onAuthStateChanged } from "firebase/auth"
 import { auth } from "./api/firebase"
 
 import Nav from "./components/Nav.vue"
+import NotificationCenter from "./components/NotificationCenter.vue"
 import GlobalChat from "./components/GlobalChat.vue"
 
 const currentUser = ref(null)
@@ -26,5 +27,6 @@ onUnmounted(() => {
 <template>
   <Nav />
   <router-view />
+  <NotificationCenter v-if="currentUser" />
   <GlobalChat v-if="currentUser" />
 </template>

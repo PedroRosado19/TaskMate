@@ -16,6 +16,7 @@ const router = useRouter()
 const currentUser = ref(null)
 const projectName = ref("")
 const projectMode = ref("solo")
+const dueDate = ref("")
 const creatingProject = ref(false)
 const errorMessage = ref("")
 const successMessage = ref("")
@@ -33,9 +34,18 @@ const generateJoinCode = () => {
   return code
 }
 
+const getTodayDateString = () => {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, "0")
+  const day = String(today.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
 const resetForm = () => {
   projectName.value = ""
   projectMode.value = "solo"
+  dueDate.value = ""
 }
 
 const createProject = async () => {
@@ -49,6 +59,11 @@ const createProject = async () => {
 
   if (!projectName.value.trim()) {
     errorMessage.value = "Project name is required."
+    return
+  }
+
+  if (dueDate.value && dueDate.value < getTodayDateString()) {
+    errorMessage.value = "Due date cannot be in the past."
     return
   }
 
@@ -70,7 +85,9 @@ const createProject = async () => {
       projectType: projectMode.value,
       visibility: userDefaultVisibility,
       joinCode,
-      createdAt: serverTimestamp()
+      dueDate: dueDate.value || "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     })
 
     successMessage.value = isGroup
@@ -80,7 +97,7 @@ const createProject = async () => {
     resetForm()
 
     setTimeout(() => {
-      router.push("/")
+      router.push("/projects")
     }, 800)
   } catch (error) {
     console.error("Error creating project:", error)
@@ -110,7 +127,7 @@ onUnmounted(() => {
         <div class="mb-4">
           <h2 class="fw-bold mb-1">Create Project</h2>
           <p class="text-muted mb-0 small">
-            Create a solo or group project. Visibility will use your Settings preference.
+            Create a solo or group project, set a due date, and get an in-app reminder the day before.
           </p>
         </div>
 
@@ -135,7 +152,7 @@ onUnmounted(() => {
             />
           </div>
 
-          <div class="mb-4">
+          <div class="mb-3">
             <label for="projectMode" class="form-label">Project Type</label>
             <select
               id="projectMode"
@@ -150,11 +167,25 @@ onUnmounted(() => {
             </small>
           </div>
 
+          <div class="mb-4">
+            <label for="dueDate" class="form-label">Due Date</label>
+            <input
+              id="dueDate"
+              v-model="dueDate"
+              type="date"
+              class="form-control"
+              :min="getTodayDateString()"
+            />
+            <small class="text-muted">
+              Optional. TaskMate will show an in-app notification one day before the due date.
+            </small>
+          </div>
+
           <div class="d-flex gap-2">
             <button
               type="button"
               class="btn btn-outline-secondary w-50"
-              @click="router.push('/')"
+              @click="router.push('/projects')"
             >
               Cancel
             </button>
