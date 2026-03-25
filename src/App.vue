@@ -1,27 +1,10 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from "vue"
-import { onAuthStateChanged } from "firebase/auth"
-import { auth } from "./api/firebase"
-
+import { useUser } from "./composables/useUser"
 import Nav from "./components/Nav.vue"
 import NotificationCenter from "./components/NotificationCenter.vue"
 import GlobalChat from "./components/GlobalChat.vue"
 
-const currentUser = ref(null)
-
-let unsubscribeAuth = null
-
-onMounted(() => {
-  unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-    currentUser.value = user
-  })
-})
-
-onUnmounted(() => {
-  if (unsubscribeAuth) {
-    unsubscribeAuth()
-  }
-})
+const { currentUser } = useUser()
 </script>
 
 <template>
